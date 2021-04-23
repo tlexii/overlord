@@ -1,0 +1,12 @@
+[DEFAULT]
+
+# RabbitMQ config
+amqp_url=amqp://localhost:5672/%%2F
+exchange=myexchange
+exchange_type=topic
+queue=task_queue
+routing_key=bot.message
+
+# Telegram bot config
+access_token= <your telegram bot access token>
+target_chat= <your target telegram chat id>

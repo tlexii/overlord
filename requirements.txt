@@ -1,0 +1,11 @@
+asn1crypto
+certifi
+cffi
+cryptography
+future
+pika
+pycparser
+python-telegram-bot
+redis
+six
+tornado
