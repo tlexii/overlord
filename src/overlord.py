@@ -111,4 +111,5 @@ if __name__ == '__main__':
     LOG_FORMAT = '%(asctime)s %(levelname)-8s %(name)-15s %(message)s'
     LOG_FILE = "/var/log/overlord/overlord.log"
     logging.basicConfig(filename=LOG_FILE, format=LOG_FORMAT, level=logging.INFO)
-    overlord_main()
+    config_file = os.environ.get('OVERLORD_CONFIG_FILE', './overlord.conf')
+    overlord_main(config_file)
