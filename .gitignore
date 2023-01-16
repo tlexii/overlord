@@ -1,2 +1,5 @@
 overlord.conf
 .venv
+**/__pycache__
+**/*.bz2
+**/*.swp

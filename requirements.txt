@@ -3,9 +3,10 @@ certifi
 cffi
 cryptography
 future
+aio-pika
 pika
 pycparser
-python-telegram-bot
+python-telegram-bot[job-queue]
 redis
 six
 tornado

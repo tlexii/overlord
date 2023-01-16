@@ -3,7 +3,7 @@
 from telegram.ext import CallbackContext
 import logging
 from baseconsumer import BaseConsumer
-import redis
+# import redis
 
 log = logging.getLogger("TelegramConsumer")
 log.setLevel("DEBUG")
@@ -55,7 +55,8 @@ class TelegramConsumer(BaseConsumer):
         elif basic_deliver.routing_key == "bot.nagios":
             self.nagios_msg(basic_deliver, properties, body)
         else:
-            log.error('Unhandled routing_key: {0}'.format(basic_deliver.routing_key))
+            log.error('Unhandled routing_key: {0}'.format(
+                                             basic_deliver.routing_key))
 
         self.acknowledge_message(basic_deliver.delivery_tag)
 
@@ -70,10 +71,11 @@ class TelegramConsumer(BaseConsumer):
 
         try:
             # handle the message by queueing a job in telegram bot
-            def basicMsg(context: CallbackContext):
-                context.bot.sendMessage(self._target_group_chat, text=bytes.decode(body))
+            async def basicMsg(context: CallbackContext):
+                await context.bot.send_message(self._target_group_chat,
+                                               text=bytes.decode(body))
 
-            self._jobqueue.run_once(basicMsg, 0)
+            self._jobqueue.run_once(basicMsg, 0.1)
 
         except Exception as err:
             log.error('Error queueing simple job: {0}'.format(err))
@@ -89,8 +91,9 @@ class TelegramConsumer(BaseConsumer):
 
         try:
             # handle the message by queueing a job in telegram bot
-            def basicMsg(context: CallbackContext):
-                my_msg =  context.bot.sendMessage(self._target_group_chat, text=bytes.decode(body))
+            async def basicMsg(context: CallbackContext):
+                await context.bot.send_message(self._target_group_chat,
+                                               text=bytes.decode(body))
 
             self._jobqueue.run_once(basicMsg, 0)
 
@@ -108,22 +111,24 @@ class TelegramConsumer(BaseConsumer):
 
         try:
             # read the key e.g. '2022-03-06_082218'
-            key=bytes.decode(body)
+            key = bytes.decode(body)
             # plain url placeholder message
-            outputmsg='https://overworld.net.au/motion2/event.php?k={0}'.format(key)
+            outputmsg = 'https://overworld.net.au/motion2/event.php?k={0}'\
+                .format(key)
 
-            def basicMsg(context: CallbackContext):
-                my_msg =  context.bot.sendMessage(self._target_group_chat,
-                    disable_notification=True,
-                    disable_web_page_preview=True,
-                    text=outputmsg)
+            async def basicMsg(context: CallbackContext):
+                my_msg = await context.bot.send_message(
+                        self._target_group_chat,
+                        disable_notification=True,
+                        disable_web_page_preview=True,
+                        text=outputmsg)
 
                 # store mapping from key to message_id
                 key = str(context.job.context)
                 self.keymap[key] = my_msg.message_id
-                log.info('saving {0}->{1}'.format(key,my_msg.message_id))
+                log.info('saving {0}->{1}'.format(key, my_msg.message_id))
 
-            self._jobqueue.run_once(basicMsg, 0, context=key )
+            self._jobqueue.run_once(basicMsg, 0, context=key)
 
         except Exception as err:
             log.error('Error queueing motion job: {0}'.format(err))
@@ -138,22 +143,26 @@ class TelegramConsumer(BaseConsumer):
         """
 
         try:
-            key=bytes.decode(body)
+            key = bytes.decode(body)
             log.info('looking for key: {0}'.format(key))
-            outputmsg='https://overworld.net.au/motion2/event.php?k={0}'.format(key)
+            outputmsg = 'https://overworld.net.au/motion2/event.php?k={0}'\
+                .format(key)
             if key in self.keymap:
                 msg_id = self.keymap[key]
-                log.info('loaded {0}->{1}'.format(key,msg_id))
+                log.info('loaded {0}->{1}'.format(key, msg_id))
                 self.keymap.pop(key)
-                def updateMsg(context: CallbackContext):
-                    my_msg =  context.bot.edit_message_text(chat_id=self._target_group_chat,
+
+                async def updateMsg(context: CallbackContext):
+                    await context.bot.edit_message_text(
+                        chat_id=self._target_group_chat,
                         message_id=msg_id,
                         text=outputmsg,
                         disable_web_page_preview=False)
                 self._jobqueue.run_once(updateMsg, 0)
             else:
-                def basicMsg(context: CallbackContext):
-                    my_msg =  context.bot.sendMessage(self._target_group_chat, outputmsg)
+                async def basicMsg(context: CallbackContext):
+                    await context.bot.send_message(
+                        self._target_group_chat, outputmsg)
                 self._jobqueue.run_once(basicMsg, 0)
 
         except Exception as err:

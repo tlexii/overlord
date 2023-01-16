@@ -1,11 +1,12 @@
 version: "3.3"
 services:
   overlord:
-    image: overlord-docker:0.3
+    image: overlord-docker:0.4
     container_name: overlord-docker
     network_mode: host
     environment:
-      OVERLORD_CONFIG_FILE: overlord.conf
+      - TZ=Australia/Brisbane
+      - OVERLORD_CONFIG_FILE=overlord.conf
     volumes:
       - type: bind
         source: /var/log/overlord/overlord.log

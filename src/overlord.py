@@ -8,49 +8,51 @@ which consumes messages from RabbitMQ.
 
 """
 
+import asyncio
 import os
 import logging
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
-from reconnectingtelegramconsumer import ReconnectingTelegramConsumer
+from telegram.ext import Application, CommandHandler, ContextTypes
+from aioconsumer import AioConsumer
 import configparser
 
 log = logging.getLogger("overlord")
 
 
 # Tell people they can set a timer - for testing
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text('Hi! Use /set <seconds> to set a timer')
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Hi! Use /set <seconds> to set a timer')
 
 
-def alarm(context: CallbackContext):
+async def alarm(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send the alarm message.
     """
-    context.bot.send_message(context.job.context, text='Beep!')
+    await context.bot.send_message(context.job.chat_id, text='Beep!')
 
 
-def set(update: Update, context: CallbackContext):
+async def set(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ Adds a job to the queue
     """
-    chat_id = update.message.chat_id
+    chat_id = update.effective_message.chat_id
     try:
         # args[0] should contain the time for the timer in seconds
-        due = int(context.args[0])
+        due = float(context.args[0])
         if due < 0:
-            update.message.reply_text('Sorry we cannot go back to future!')
+            await update.effective_message.reply_text(
+                    'Sorry we cannot go back to future!')
 
         # Add job to queue
-        job = context.job_queue.run_once(alarm, due, context=chat_id)
-        context.chat_data['job'] = job
+        context.job_queue.run_once(alarm, due, chat_id=chat_id,
+                                   name=str(chat_id), data=due)
 
-        update.message.reply_text('Timer successfully set!')
+        await update.effective_message.reply_text('Timer successfully set!')
 
     except (IndexError, ValueError):
-        update.message.reply_text('Usage: /set <seconds>')
+        await update.effective_message.reply_text('Usage: /set <seconds>')
 
 
 # write telegram error messages into the log
-def error(update: Update, context: CallbackContext):
+async def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.warning('Update "%s" caused error "%s"' % (update, context.error))
 
 
@@ -65,51 +67,54 @@ def parse_config(file):
     return config
 
 
-def overlord_main(file='overlord.conf'):
+async def main(file='overlord.conf') -> None:
 
     # main bot config
     kwargs = dict(parse_config(file).items("DEFAULT"))
-
-    # we need our access token from config to get an Updater
-    updater = Updater(kwargs["access_token"], use_context=True)
-
     # a connection url to rabbit is mandatory
     amqp_url = kwargs["amqp_url"]
-
     # but dont include in kwargs
     if "amqp_url" in kwargs:
         del kwargs["amqp_url"]
 
-    # we need to pass a JobQueue inside the telegram consumer to communicate
-    telegram_consumer = ReconnectingTelegramConsumer(amqp_url=amqp_url, jobqueue=updater.job_queue, **kwargs)
+    # we need our access token from config
+    application = Application.builder().token(kwargs["access_token"]).build()
+    await application.initialize()
 
     # on different commands - answer in Telegram
-    updater.dispatcher.add_handler(CommandHandler("start", start))
-    updater.dispatcher.add_handler(CommandHandler("help", start))
-    updater.dispatcher.add_handler(CommandHandler("set", set))
-
+    application.add_handler(CommandHandler(["start", "help"], start))
+    application.add_handler(CommandHandler("set", set))
     # log all errors
-    updater.dispatcher.add_error_handler(error)
+    application.add_error_handler(error)
 
     # Start the Bot
-    updater.start_polling()
+    await application.start()
 
-    # start the MQ consumer
+    # we need to pass a JobQueue inside the telegram consumer to communicate
+    telegram_consumer = AioConsumer(
+        amqp_url=amqp_url, jobqueue=application.job_queue, **kwargs)
+
+    await application.updater.start_polling()
+
+    # loop = asyncio.get_event_loop()
+    await telegram_consumer.run()
     try:
-        telegram_consumer.run()      # does block
+        # await asyncio.sleep(1)
+        await asyncio.Future()
+        # loop.run_until_completion(telegram_consumer.run())
     except KeyboardInterrupt:
         log.info('interrupted')
 
-    updater.stop()
-    telegram_consumer.stop()
-
+    await telegram_consumer.stop()
+    await application.updater.stop()
+    await application.stop()
+    await application.shutdown()
 
 if __name__ == '__main__':
-    PID_FILE = "/var/run/overlord.pid"
-    with open(PID_FILE, "w") as pidfile:
-        pidfile.write("%s\n" % os.getpid())
     LOG_FORMAT = '%(asctime)s %(levelname)-8s %(name)-15s %(message)s'
-    LOG_FILE = "/var/log/overlord/overlord.log"
-    logging.basicConfig(filename=LOG_FILE, format=LOG_FORMAT, level=logging.INFO)
+    logging.basicConfig(format=LOG_FORMAT, level=logging.INFO)
     config_file = os.environ.get('OVERLORD_CONFIG_FILE', './overlord.conf')
-    overlord_main(config_file)
+    try:
+        asyncio.run(main(config_file))
+    except KeyboardInterrupt:
+        pass
