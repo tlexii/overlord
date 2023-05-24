@@ -1,6 +1,9 @@
-version: "3.3"
+version: "3.4"
 services:
   overlord:
+    build:
+      context: .
+      network: host
     image: overlord-docker:0.4
     container_name: overlord-docker
     network_mode: host

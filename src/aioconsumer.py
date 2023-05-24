@@ -21,18 +21,26 @@ class AioConsumer(object):
         self._queue = kwargs.get('queue', 'task_queue')
         self._routing_key = kwargs.get('routing_key', 'bot.message')
         self.connection = None
+        self.keymap = {}
 
     async def process_message(self, message) -> None:
         async with message.process():
-            log.debug(message.body)
-            # await message.ack()
+            # log.debug(message.body)
             if message.routing_key == "bot.message":
                 await self.simple_msg(message.body)
+            elif message.routing_key == "bot.motion_areadetect":
+                await self.motion_area(message.body)
+            elif message.routing_key == "bot.motion_moviecomplete":
+                await self.motion_movie(message.body)
+            elif message.routing_key == "bot.nagios":
+                # TODO
+                await self.simple(message.body)
             else:
                 log.error('Unhandled routing_key: {0}'.format(
                                                 message.routing_key))
 
-#            self.acknowledge_message(basic_deliver.delivery_tag)
+            # TODO
+            # await message.ack()
 
     async def simple_msg(self, body) -> None:
         """Handle simple messages with key bot.send_message.
@@ -52,8 +60,73 @@ class AioConsumer(object):
         except Exception as err:
             log.error('Error queueing simple job: {0}'.format(err))
 
+    async def motion_area(self, body):
+        """Display an incoming motion area placeholder, remember key.
+
+        :param str|unicode body: contains the id - timestamp string
+
+        """
+
+        try:
+            # read the key e.g. '2022-03-06_082218'
+            key = bytes.decode(body)
+            # plain url placeholder message
+            outputmsg = 'https://overworld.net.au/motion2/event.php?k={0}'\
+                .format(key)
+
+            async def basicMsg(context: ContextTypes.DEFAULT_TYPE):
+                my_msg = await context.bot.send_message(
+                        self._target_group_chat,
+                        disable_notification=True,
+                        disable_web_page_preview=True,
+                        text=outputmsg)
+
+                # store mapping from key to message_id
+                key = str(context.job.data)
+                self.keymap[key] = my_msg.message_id
+                log.info('saving {0}->{1}'.format(key, my_msg.message_id))
+
+            self._jobqueue.run_once(basicMsg, 0.1, data=key)
+
+        except Exception as err:
+            log.error('Error queueing motion job: {0}'.format(err))
+
+    async def motion_movie(self, body):
+        """Update an existing motion area placeholder with an URL.
+
+        :param str|unicode body: The message body
+
+        """
+
+        try:
+            key = bytes.decode(body)
+            log.info('looking for key: {0}'.format(key))
+            outputmsg = 'https://overworld.net.au/motion2/event.php?k={0}'\
+                .format(key)
+            if key in self.keymap:
+                msg_id = self.keymap[key]
+                log.info('loaded {0}->{1}'.format(key, msg_id))
+                self.keymap.pop(key)
+
+                async def updateMsg(context: ContextTypes.DEFAULT_TYPE):
+                    await context.bot.edit_message_text(
+                        chat_id=self._target_group_chat,
+                        message_id=msg_id,
+                        text=outputmsg,
+                        disable_web_page_preview=False)
+                self._jobqueue.run_once(updateMsg, 0.1)
+            else:
+                async def basicMsg(context: ContextTypes.DEFAULT_TYPE):
+                    await context.bot.send_message(
+                        self._target_group_chat, outputmsg)
+                self._jobqueue.run_once(basicMsg, 0)
+
+        except Exception as err:
+            log.error('Error queueing nagios job: {0}'.format(err))
+
     async def run(self) -> None:
-        self.connection = await aio_pika.connect_robust(self._amqp_url)
+        # self.connection = await aio_pika.connect_robust(self._amqp_url)
+        self.connection = await aio_pika.connect(self._amqp_url)
         self.channel = await self.connection.channel()
         self.exchange = await self.channel.declare_exchange(
                             name=self._exchange,
@@ -104,7 +177,7 @@ async def main(file='overlord.conf') -> None:
 
 if __name__ == "__main__":
     LOG_FORMAT = '%(asctime)s %(levelname)-8s %(name)-15s %(message)s'
-    logging.basicConfig(format=LOG_FORMAT, level=logging.DEBUG)
+    logging.basicConfig(format=LOG_FORMAT, level=logging.INFO)
     config_file = os.environ.get('OVERLORD_CONFIG_FILE', './overlord.conf')
     try:
         asyncio.run(main(config_file))
