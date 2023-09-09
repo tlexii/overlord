@@ -16,6 +16,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from aioconsumer import AioConsumer
 import configparser
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("overlord")
 
 
@@ -79,22 +80,19 @@ async def main(file='overlord.conf') -> None:
 
     # we need our access token from config
     application = Application.builder().token(kwargs["access_token"]).build()
-    await application.initialize()
-
-    # on different commands - answer in Telegram
-    application.add_handler(CommandHandler(["start", "help"], start))
-    application.add_handler(CommandHandler("set", set))
-    # log all errors
-    application.add_error_handler(error)
 
     # Start the Bot
-    await application.start()
+    await application.initialize()
+    application.add_handler(CommandHandler(["start", "help"], start))
+    application.add_handler(CommandHandler("set", set))
+    application.add_error_handler(error)
 
     # we need to pass a JobQueue inside the telegram consumer to communicate
     telegram_consumer = AioConsumer(
         amqp_url=amqp_url, jobqueue=application.job_queue, **kwargs)
 
     await application.updater.start_polling()
+    await application.start()
 
     # loop = asyncio.get_event_loop()
     await telegram_consumer.run()
@@ -106,6 +104,7 @@ async def main(file='overlord.conf') -> None:
         log.info('interrupted')
 
     await telegram_consumer.stop()
+
     await application.updater.stop()
     await application.stop()
     await application.shutdown()
