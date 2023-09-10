@@ -14,7 +14,3 @@ services:
     environment:
       - TZ=Australia/Brisbane
       - OVERLORD_CONFIG_FILE=overlord.conf
-    volumes:
-      - type: bind
-        source: /var/log/overlord/overlord.log
-        target: /var/log/overlord/overlord.log 

@@ -11,7 +11,6 @@ RUN .venv/bin/pip install -r requirements.txt --disable-pip-version-check
 FROM python:3-slim
 WORKDIR /usr/local/overlord-docker
 
-VOLUME /var/log/overlord
 COPY --from=builder /usr/local/overlord-docker/.venv ./.venv
 COPY ./src .
 COPY overlord.conf .
