@@ -17,6 +17,7 @@ from aioconsumer import AioConsumer
 import configparser
 
 log = logging.getLogger("overlord")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 # Tell people they can set a timer - for testing

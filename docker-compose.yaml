@@ -1,16 +1,23 @@
 version: "3.4"
 services:
   overlord:
-    image: overlord-docker:latest
+    image: overlord:latest
+    restart: always
     build:
       context: .
       network: host
       x-bake:
         tags:
-          - overlord-docker:latest
-          - overlord-docker:${TAG}
-    container_name: overlord-docker
-    network_mode: host
+          - overlord:latest
+          - overlord:${TAG:-0.1}
+    container_name: overlord
+    networks:
+      - overworld-network
     environment:
       - TZ=Australia/Brisbane
       - OVERLORD_CONFIG_FILE=overlord.conf
+
+networks:
+  overworld-network:
+    external: true
+
