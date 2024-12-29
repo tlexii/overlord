@@ -6,7 +6,6 @@ future
 aio-pika
 pika
 pycparser
-python-telegram-bot[job-queue]
-redis
+python-telegram-bot[job-queue,http2]
 six
 tornado
