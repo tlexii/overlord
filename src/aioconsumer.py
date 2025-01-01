@@ -1,13 +1,13 @@
 import asyncio
-
 import aio_pika
-import logging
-import os
+import logging, traceback
+import os, subprocess
 import configparser
 from telegram.ext import ContextTypes
+from pymemcache.client.base import Client
 
 log = logging.getLogger("overlord")
-
+log.setLevel(logging.DEBUG)
 
 class AioConsumer(object):
 
@@ -21,23 +21,23 @@ class AioConsumer(object):
         self._queue = kwargs.get('queue', 'task_queue')
         self._routing_key = kwargs.get('routing_key', 'bot.message')
         self.connection = None
-        self.keymap = {}
+        self.cache = Client('memcache')
 
     async def process_message(self, message) -> None:
         async with message.process():
             # log.debug(message.body)
             if message.routing_key == "bot.message":
                 await self.simple_msg(message.body)
+            elif message.routing_key == "bot.motion_eventstart":
+                await self.motion_event(message.body)
             elif message.routing_key == "bot.motion_areadetect":
                 await self.motion_area(message.body)
+            elif message.routing_key == "bot.motion_picturesaved":
+                await self.motion_picture(message.body)
             elif message.routing_key == "bot.motion_moviecomplete":
                 await self.motion_movie(message.body)
-            elif message.routing_key == "bot.nagios":
-                # TODO
-                await self.simple(message.body)
             else:
-                log.error('Unhandled routing_key: {0}'.format(
-                                                message.routing_key))
+                log.error('Unhandled routing_key: {0}'.format(message.routing_key))
 
             # TODO
             # await message.ack()
@@ -52,44 +52,107 @@ class AioConsumer(object):
         try:
             # handle the message by queueing a job in telegram bot
             async def basicMsg(context: ContextTypes.DEFAULT_TYPE):
-                await context.bot.send_message(self._target_group_chat,
-                                               text=bytes.decode(body))
+                await context.bot.send_message(self._target_group_chat, text=bytes.decode(body))
 
-            self._jobqueue.run_once(basicMsg, 0.1)
+            self._jobqueue.run_once(basicMsg, 0.001)
 
         except Exception as err:
-            log.error('Error queueing simple job: {0}'.format(err))
+            log.error(f'Error queueing simple job: {err}')
 
-    async def motion_area(self, body):
+
+    async def motion_event(self, body):
         """Display an incoming motion area placeholder, remember key.
 
-        :param str|unicode body: contains the id - timestamp string
+        :param str|unicode body: contains the event_id
+
+        """
+
+        try:
+            # read the event_id
+            event_id = bytes.decode(body)
+            key = self.cache.get(event_id, None)
+            if key is None:
+                log.warning(f'event start - cache miss: {event_id}')
+                return
+
+            if key != '0':
+                log.debug(f"event start - key already set {event_id}={key}")
+
+            # placeholder message
+            outputmsg = 'Event started ...'
+            log.info(f"motion event start: {event_id}")
+
+            async def eventMsg(context: ContextTypes.DEFAULT_TYPE):
+                my_msg = await context.bot.send_message(self._target_group_chat, disable_notification=True, text=outputmsg)
+
+                # store mapping from event_id to message_id
+                key = str(context.job.data)
+                log.info('saving {0}->{1}'.format(key + ':id', my_msg.message_id))
+                self.cache.add(key + ':id', my_msg.message_id, 86400)
+
+            self._jobqueue.run_once(eventMsg, 0.001, data=event_id)
+
+        except Exception as err:
+            log.error(f'Error queueing motion job: {err}')
+
+
+    async def motion_area(self, body):
+        """Notify the user.
+
+        :param str|unicode body: contains the event_id
 
         """
 
         try:
             # read the key e.g. '2022-03-06_082218'
-            key = bytes.decode(body)
-            # plain url placeholder message
-            outputmsg = 'https://overworld.net.au/motion2/event.php?k={0}'\
-                .format(key)
+            event_id = bytes.decode(body)
+            msg_id = self.cache.get(event_id + ':id', None)
+            if msg_id is None:
+                log.info(f'area detect - invalid cache for: {event_id}')
+                return
 
-            async def basicMsg(context: ContextTypes.DEFAULT_TYPE):
-                my_msg = await context.bot.send_message(
-                        self._target_group_chat,
-                        disable_notification=True,
-                        disable_web_page_preview=True,
-                        text=outputmsg)
+            # update placeholder message
+            msg_id = msg_id.decode()
+            outputmsg = 'Motion Alert ...'.format(event_id)
+            log.info(f'area detect for event_id: {event_id}')
 
-                # store mapping from key to message_id
-                key = str(context.job.data)
-                self.keymap[key] = my_msg.message_id
-                log.info('saving {0}->{1}'.format(key, my_msg.message_id))
+            async def areaMsg(context: ContextTypes.DEFAULT_TYPE):
+                await context.bot.edit_message_text(chat_id=self._target_group_chat, message_id=msg_id, text=outputmsg)
 
-            self._jobqueue.run_once(basicMsg, 0.1, data=key)
+            self._jobqueue.run_once(areaMsg, 0.001)
 
         except Exception as err:
-            log.error('Error queueing motion job: {0}'.format(err))
+            log.error(f'Error queueing motion job: {err}')
+
+
+    async def motion_picture(self, body):
+        """Notify the user.
+
+        :param str|unicode body: contains the event_id
+
+        """
+        try:
+            event_id = bytes.decode(body)
+            event = self.cache.get(event_id, None)
+            msg_id = self.cache.get(event_id + ':id', None)
+            if msg_id is None:
+                log.info(f'picture saved - invalid cache for: {event_id}')
+                return
+
+            # update placeholder message
+            event = event.decode()
+            msg_id = msg_id.decode()
+            outputmsg = f'https://overworld.net.au/motion2/preview.php?k={event}'
+            log.info(f'picture saved for event_id: {event_id}')
+
+            async def pictureMsg(context: ContextTypes.DEFAULT_TYPE):
+                await context.bot.edit_message_text( chat_id=self._target_group_chat, message_id=msg_id, text=outputmsg)
+
+            self._jobqueue.run_once(pictureMsg, 0.001)
+
+        except Exception as err:
+            log.error(f'Error queueing motion job: {err}')
+
 
     async def motion_movie(self, body):
         """Update an existing motion area placeholder with an URL.
@@ -99,30 +162,42 @@ class AioConsumer(object):
         """
 
         try:
-            key = bytes.decode(body)
-            log.info('looking for key: {0}'.format(key))
-            outputmsg = 'https://overworld.net.au/motion2/event.php?k={0}'\
-                .format(key)
-            if key in self.keymap:
-                msg_id = self.keymap[key]
-                log.info('loaded {0}->{1}'.format(key, msg_id))
-                self.keymap.pop(key)
+            event_id = bytes.decode(body)
+            event = self.cache.get(event_id, None)
+            msg_id = self.cache.get(event_id + ':id', None)
+            filename = self.cache.get(event_id + ':filename', None)
+            if msg_id is None or filename is None:
+                log.info(f'movie end - invalid cache for: {event_id}')
+                return
 
-                async def updateMsg(context: ContextTypes.DEFAULT_TYPE):
-                    await context.bot.edit_message_text(
-                        chat_id=self._target_group_chat,
-                        message_id=msg_id,
-                        text=outputmsg,
-                        disable_web_page_preview=False)
-                self._jobqueue.run_once(updateMsg, 0.1)
-            else:
-                async def basicMsg(context: ContextTypes.DEFAULT_TYPE):
-                    await context.bot.send_message(
-                        self._target_group_chat, outputmsg)
-                self._jobqueue.run_once(basicMsg, 0)
+            event = event.decode()
+            msg_id = msg_id.decode()
+            filename = filename.decode()
+
+            outputmsg = f'Processing https://overworld.net.au/motion2/preview.php?k={event}'
+            async def updateProcessMsg(context: ContextTypes.DEFAULT_TYPE):
+                await context.bot.edit_message_text(chat_id=self._target_group_chat, message_id=msg_id, text=outputmsg)
+
+            self._jobqueue.run_once(updateProcessMsg, 0.2)
+
+            target = filename.replace('mp4', 'webm')
+            log.info(f'movie end {event_id} - calling ffmpeg: {filename}->{target}')
+            process = await asyncio.create_subprocess_exec("ffmpeg","-v", "quiet","-i", filename, "-c:v", "libvpx-vp9", "-crf", "35", "-b:v", "2000k", "-an", target)
+            rc = await process.wait()
+
+            outputmsg = f'https://overworld.net.au/motion2/event.php?k={event}'
+            async def updateMovieMsg(context: ContextTypes.DEFAULT_TYPE):
+                await context.bot.edit_message_text(chat_id=self._target_group_chat, message_id=msg_id, text=outputmsg)
+
+            self._jobqueue.run_once(updateMovieMsg, 0.2)
+
+            log.info(f'movie end {event_id} - removing: {filename}')
+            os.remove(filename)
 
         except Exception as err:
-            log.error('Error queueing nagios job: {0}'.format(err))
+            log.error(f'Error queueing motion job: {err}')
+            log.error(traceback.format_exc())
+
 
     async def run(self) -> None:
         # self.connection = await aio_pika.connect_robust(self._amqp_url)
@@ -134,11 +209,9 @@ class AioConsumer(object):
                             auto_delete=False)
 
         # Maximum message count which will be processing at the same time.
-        await self.channel.set_qos(prefetch_count=1)
+        await self.channel.set_qos(prefetch_count=2)
         # Declaring queue
-        self.queue = await self.channel.declare_queue(self._queue,
-                                                      durable=True,
-                                                      auto_delete=False)
+        self.queue = await self.channel.declare_queue(self._queue, durable=True, auto_delete=False)
         await self.queue.bind(self.exchange, self._routing_key)
         await self.queue.consume(self.process_message)
 
@@ -152,7 +225,7 @@ def parse_config(file):
     """ Read the local configuration from the file specified.
 
     """
-    log.debug("parsing config file: {}".format(file))
+    log.debug(f"parsing config file: {file}")
     config = configparser.ConfigParser()
     config.read(file)
     return config

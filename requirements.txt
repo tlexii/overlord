@@ -9,3 +9,4 @@ pycparser
 python-telegram-bot[job-queue,http2]
 six
 tornado
+pymemcache

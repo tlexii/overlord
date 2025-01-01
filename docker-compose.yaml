@@ -11,6 +11,10 @@ services:
           - overlord:latest
           - overlord:${TAG:-0.1}
     container_name: overlord
+    volumes:
+      - type: bind
+        source: /var/docker/motion-data
+        target: /var/lib/motion
     networks:
       - overworld-network
     environment:
