@@ -83,7 +83,8 @@ class AioConsumer(object):
             log.info(f"motion event start: {event_id}")
 
             async def eventMsg(context: ContextTypes.DEFAULT_TYPE):
-                my_msg = await context.bot.send_message(self._target_group_chat, disable_notification=True, text=outputmsg)
+                my_msg = await context.bot.send_message(self._target_group_chat, disable_notification=True,
+                        text=outputmsg)
 
                 # store mapping from event_id to message_id
                 key = str(context.job.data)
@@ -106,18 +107,11 @@ class AioConsumer(object):
         try:
             # read the key e.g. '2022-03-06_082218'
             event_id = bytes.decode(body)
-            msg_id = self.cache.get(event_id + ':id', None)
-            if msg_id is None:
-                log.info(f'area detect - invalid cache for: {event_id}')
-                return
-
-            # update placeholder message
-            msg_id = msg_id.decode()
-            outputmsg = 'Motion Alert ...'.format(event_id)
             log.info(f'area detect for event_id: {event_id}')
 
+            outputmsg = f'Proximity alert for {event_id}'
             async def areaMsg(context: ContextTypes.DEFAULT_TYPE):
-                await context.bot.edit_message_text(chat_id=self._target_group_chat, message_id=msg_id, text=outputmsg)
+                await context.bot.send_message(self._target_group_chat, text=outputmsg)
 
             self._jobqueue.run_once(areaMsg, 0.001)
 
